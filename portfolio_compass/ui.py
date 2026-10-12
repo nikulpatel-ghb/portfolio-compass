@@ -14,7 +14,7 @@ from .accounting import analyze
 from .ai import GLOSSARY, answer, money
 from .config import ai_available
 from .importing import ALIASES, export_csv, normalize, read_csv, suggest_mapping
-from .instruments import CATALOG, aliases, catalog_candidates, key
+from .instruments import CATALOG, resolve_batch
 from .market_data import demo_market, fetch_market, last_completed_session, lookup, session_dates
 from .performance import comparison, period_metrics
 
@@ -100,7 +100,7 @@ def get_started():
         st.button('Explore sample portfolio', type='primary', on_click=load_demo, width='stretch')
     with right, st.container(border=True):
         st.subheader('Bring your own history')
-        st.write('Use tickers or common names. You will review column and investment matches before analysis.')
+        st.write('Use tickers or common names. Codes and clear matches resolve automatically; only ambiguous names need your input.')
         st.download_button('Download CSV template', b'company,date,transaction_type,quantity,price,fees,cash_amount\nApple,2024-01-03,BUY,10,185.07,0,\n', 'portfolio-template.csv', 'text/csv', width='stretch')
         st.caption('USD · US investments · purchases, sales, distributions · complete history')
     st.divider()
@@ -145,28 +145,14 @@ def get_started():
     if len(raw_names) > 200:
         st.error('Use at most 200 unique raw names/tickers, resolving to at most 100 investments.')
         return
-    st.markdown('**2 · Confirm the investments**')
-    st.caption('Names and tickers may be mixed. Partial names need a confirmed selection; share classes remain separate.')
-    resolved = {}
-    for raw in raw_names:
-        row_key = hashlib.sha256((fingerprint + raw).encode()).hexdigest()[:16]
-        candidates = st.session_state.get('lookup_results', {}).get(raw, catalog_candidates(raw))
-        col1, col2 = st.columns([4, 1])
-        with col2:
-            if st.button('Find investment', key=f'lookup-{row_key}'):
-                with st.spinner('Checking supported US securities…'):
-                    candidates, error = lookup(raw)
-                st.session_state.setdefault('lookup_results', {})[raw] = candidates
-                st.session_state.pop(f'identity-{row_key}', None)
-                if error:
-                    st.warning(error)
-        exact = [i for i in candidates if key(raw) in aliases(i)]
-        labels = {f'{i.label} · {i.exchange} · {i.kind} · USD': i for i in candidates}
-        default = next((n for n, i in enumerate(candidates) if len(exact) == 1 and i == exact[0]), None)
-        with col1:
-            selection = st.selectbox(f'Investment supplied: {raw}', list(labels), index=default, placeholder='Select a verified match', key=f'identity-{row_key}')
-        if selection:
-            resolved[raw] = labels[selection]
+    context = hashlib.sha256(json.dumps([fingerprint, mapping, date_format, convention], sort_keys=True).encode()).hexdigest()
+    if st.session_state.get('validation_context') != context:
+        clear_portfolio()
+        st.session_state.validation_context = context
+        st.session_state.pop('identity_batch', None)
+    resolved = validate_investments(raw_names, context)
+    if resolved is None:
+        return
     signature = hashlib.sha256(json.dumps([fingerprint, mapping, date_format, convention, {k: v.symbol for k, v in resolved.items()}], sort_keys=True).encode()).hexdigest()
     new_signature(signature)
     st.markdown('**3 · Review and analyze**')
@@ -199,6 +185,45 @@ def get_started():
             st.error(str(exc))
     if 'pending' in st.session_state:
         income_review()
+
+
+def validate_investments(raw_names, context):
+    """Single validation action; only ambiguous names produce selection controls."""
+    st.markdown('**2 · Validate investments**')
+    st.caption('Validate all inputs together. Verified codes and clear names are accepted automatically.')
+    if st.button('Validate inputs', type='primary'):
+        clear_portfolio()
+        for name in list(st.session_state):
+            if name.startswith('ambiguous-'):
+                del st.session_state[name]
+        with st.spinner('Validating all investment codes and names…'):
+            st.session_state.identity_batch = resolve_batch(raw_names, lookup)
+    batch = st.session_state.get('identity_batch')
+    if batch is None:
+        st.info('Click Validate inputs once to check every investment in the file.')
+        return None
+    automatic, ambiguous, errors = batch
+    resolved = dict(automatic)
+    if ambiguous:
+        st.warning(f'{len(ambiguous)} ambiguous name(s) need a selection. All are listed below.')
+        for raw, candidates in ambiguous.items():
+            labels = {f'{item.label} · {item.exchange} · {item.kind}': item for item in candidates}
+            widget_key = 'ambiguous-' + hashlib.sha256((context + raw).encode()).hexdigest()[:16]
+            selected = st.selectbox(f'Choose the investment for {raw}', list(labels), index=None, key=widget_key)
+            if selected:
+                resolved[raw] = labels[selected]
+    for raw, message in errors.items():
+        st.error(f'{raw}: {message}')
+    if resolved:
+        with st.expander(f'{len(resolved)} resolved inputs · view matches'):
+            st.dataframe([{'Input': raw, 'Code': item.symbol, 'Investment': item.name,
+                           'Status': 'Automatic' if raw in automatic else 'Selected'} for raw, item in resolved.items()],
+                         hide_index=True, width='stretch')
+    if errors or len(resolved) != len(raw_names):
+        clear_portfolio()
+        return None
+    st.success('All investments resolved. No further identity confirmation is needed.')
+    return resolved
 
 
 def income_review():
@@ -292,7 +317,9 @@ def performance_view(result, dark):
     for column, label, value in zip(cols, ['Purchases', 'Net sale proceeds', 'Income', 'Period profit'], [metrics.get('purchases'), metrics.get('sales'), metrics.get('income'), metrics['profit']]):
         column.metric(label, money(value))
     rate = metrics['xirr']
-    st.caption(('Period XIRR: ' + f'{rate:.2%}' if rate is not None else 'Period XIRR unavailable') + ' · ' + metrics['reason'])
+    st.metric('Annualized return · XIRR', f'{rate:.2%}' if rate is not None else 'Unavailable',
+              help='Return for the selected reporting period, using dated cash flows and opening/closing investment values. ' + metrics['reason'])
+    st.caption(metrics['reason'])
     st.subheader('Performance, on the same scale')
     benchmark = st.checkbox('Compare with S&P 500 (SPY proxy)', value=False)
     series, reason = comparison(result, start, end)

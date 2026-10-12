@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from .models import MAX_BYTES, MAX_INSTRUMENTS, MAX_ROWS, Issue, Transaction, ZERO
 
 ALIASES = {
-    'instrument': ['ticker', 'symbol', 'stock', 'company', 'companyname', 'investment', 'security', 'fundname'],
+    'instrument': ['code', 'stockcode', 'securitycode', 'ticker', 'symbol', 'stock', 'company', 'companyname', 'investment', 'security', 'fundname', 'name'],
     'name': ['companyname', 'securityname', 'fundname', 'name'],
     'date': ['date', 'tradedate', 'transactiondate', 'postingdate'],
     'type': ['type', 'transactiontype', 'action', 'side', 'activity'],

@@ -48,9 +48,10 @@ def test_unavailable_cases(flows):
     assert xirr(flows)[0] is None
 
 
-def test_canonical_csv_cashflows_with_independent_terminal_value():
+@pytest.mark.parametrize('filename', ['portfolio_compass_canonical_1.csv', 'portfolio_compass_canonical_2.csv'])
+def test_canonical_csv_cashflows_with_independent_terminal_value(filename):
     """Use real uploaded cash flows, but a synthetic terminal value with a known 12% IRR."""
-    path = ROOT / 'portfolio_compass_canonical_1.csv'
+    path = ROOT / filename
     with path.open(newline='', encoding='utf-8-sig') as stream:
         rows = list(csv.DictReader(stream))
     flows = []
@@ -77,3 +78,21 @@ def test_sample_dashboard_displays_xirr():
     tile = next(metric for metric in app.metric if 'XIRR' in metric.label)
     assert tile.value != 'Unavailable'
     assert tile.value.endswith('%')
+    overview_rate = tile.value
+    app.radio(key='page').set_value('Performance').run()
+    assert not app.exception
+    performance_tile = next(metric for metric in app.metric if 'XIRR' in metric.label)
+    assert performance_tile.value == overview_rate
+
+
+def test_selected_period_xirr_includes_opening_value():
+    from types import SimpleNamespace
+    from portfolio_compass.performance import period_metrics
+    opening, closing = date(2021, 12, 31), date(2022, 12, 31)
+    analysis = SimpleNamespace(
+        daily=[{'date': opening, 'value': 100},
+               {'date': closing, 'value': 110, 'buy_flow': 0, 'sale_flow': 0, 'income_flow': 0}],
+        conflicts=[], cashflows=[])
+    metrics = period_metrics(analysis, date(2022, 1, 1), closing)
+    assert metrics['xirr'] == pytest.approx(.1, abs=1e-9)
+    assert metrics['profit'] == 10

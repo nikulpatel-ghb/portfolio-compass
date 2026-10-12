@@ -1,6 +1,7 @@
 """Bounded public-data adapters. Private transactions are never cached here."""
 
 import math
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -48,6 +49,15 @@ def lookup(query):
 def _lookup(query, bucket):
     try:
         yf = _yf()
+        if re.fullmatch(r'[A-Za-z]{1,6}(?:[.-][A-Za-z])?', query):
+            symbol = query.upper().replace('.', '-')
+            try:
+                info = yf.Ticker(symbol).get_info()
+                item = verified_candidate(info, symbol)
+                if item and str(info.get('symbol', symbol)).upper() == symbol:
+                    return [item], ''
+            except Exception:
+                pass  # A short common name may need the name search below.
         search = yf.Search(query, max_results=6, news_count=0, enable_fuzzy_query=False, timeout=12)
         symbols = list(dict.fromkeys(q.get('symbol', '') for q in search.quotes))[:6]
         # Search results alone do not authorize an instrument.

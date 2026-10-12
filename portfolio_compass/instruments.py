@@ -50,3 +50,28 @@ def verified_candidate(info, symbol):
     known = next((x for x in CATALOG if x.symbol == symbol), None)
     extra = tuple({str(info.get('shortName') or name), *(known.aliases if known else ()), *( (known.name,) if known else ())})
     return Instrument(symbol, name, kind, info.get('fullExchangeName', exchange), 'USD', extra, info.get('sector', 'Unknown'), 'Yahoo metadata')
+
+
+def resolve_batch(inputs, provider_lookup):
+    """One batch: auto-resolve codes/clear names; return only uncertain names for review."""
+    resolved, ambiguous, errors = {}, {}, {}
+    for raw in dict.fromkeys(inputs):
+        local = catalog_candidates(raw)
+        exact = [item for item in local if key(raw) in aliases(item)]
+        if len(exact) == 1:
+            resolved[raw] = exact[0]
+            continue
+        candidates, error = provider_lookup(raw)
+        candidates = list({item.symbol: item for item in candidates}.values())
+        codes = [item for item in candidates if key(raw).replace('.', '-') == key(item.symbol).replace('.', '-')]
+        if len(codes) == 1:
+            resolved[raw] = codes[0]
+        elif re.fullmatch(r'[A-Z]{1,6}(?:[.-][A-Z])?', raw):
+            errors[raw] = error or 'Code could not be verified. Correct the code or retry validation.'
+        elif len(candidates) == 1:
+            resolved[raw] = candidates[0]
+        elif candidates:
+            ambiguous[raw] = candidates
+        else:
+            errors[raw] = error or 'No supported investment matched this name. Correct it and validate again.'
+    return resolved, ambiguous, errors
