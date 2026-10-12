@@ -24,6 +24,7 @@ GLOSSARY = {
     'income': 'Income combines recorded distributions with reconciled market-data estimates. Estimated income is not a confirmed payment and is not automatically reinvested.',
     'benchmark': 'The S&P 500 comparison uses SPY as an ETF proxy. Both return lines start at zero on the first selected close. Portfolio returns use the disclosed daily cash-flow approximation.',
     'upload': 'Upload one CSV with investment name or ticker, date, transaction type, quantity and unit price. Map its columns, confirm investment identities, review issues, and analyze. Recorded distributions use a cash-amount column.',
+    'sell': 'This is decision support, not a trade recommendation. Review holdings with losses, incomplete valuation, or unusually large allocations before deciding whether any action is appropriate.',
 }
 WORDS = set(('a an the my our me i we you your please can could would show tell explain help understand '
              'what which how why is are was were did does do has have had with without and or of on in to for '
@@ -37,8 +38,8 @@ WORDS = set(('a an the my our me i we you your please can could would show tell 
              'concentration concentrated percent percentage compare comparison versus vs benchmark market '
              'meaning mean means definition calculated calculate calculation explain summary summarize overview '
              'upload csv column columns map mapping import data dates date history historical today money '
-             'more less most least different difference dollars invested understand doing').split())
-ADVICE = re.compile(r'\b(should|recommend\w*|suggest\w*|buy|sell|rebalance\w*|predict\w*|forecast\w*|tomorrow|target)\b', re.I)
+             'more less most least different difference dollars invested understand doing shall sell selling').split())
+ADVICE = re.compile(r'\b(should|recommend\w*|suggest\w*|buy|rebalance\w*|predict\w*|forecast\w*|tomorrow|target)\b', re.I)
 _calls = deque()
 _lock = threading.Lock()
 
@@ -96,6 +97,8 @@ def route(question, instruments, last_symbol=None):
         topic = 'income'
     elif tokens & {'allocation', 'concentration', 'concentrated', 'largest', 'biggest'}:
         topic = 'allocation'
+    elif tokens & {'sell', 'selling'}:
+        topic = 'sell'
     elif tokens & {'contributed', 'contribution', 'best', 'worst', 'highest', 'lowest'}:
         topic = 'contribution'
     elif tokens & {'profit', 'loss', 'gains', 'gain', 'performance', 'perform', 'return', 'returns'}:
@@ -136,6 +139,24 @@ def evidence(analysis, intent):
     elif topic == 'income':
         for row in rows[:10]:
             facts.append(f"{row['investment']}: recorded plus reconciled estimated income is {money(row['income'])}.")
+    elif topic == 'sell':
+        facts.append('I cannot decide what you should sell, but I can highlight holdings that deserve review. This is not a trade recommendation.')
+        review_rows = sorted(
+            rows,
+            key=lambda r: (
+                r['unrealized'] is not None and r['unrealized'] < 0,
+                abs(r['unrealized']) if r['unrealized'] is not None else 0,
+            ),
+            reverse=True,
+        )
+        for row in review_rows[:5]:
+            if row['unrealized'] is None:
+                reason = 'valuation is unavailable'
+            elif row['unrealized'] < 0:
+                reason = f"unrealized loss of {money(abs(row['unrealized']))}"
+            else:
+                reason = f"unrealized gain of {money(row['unrealized'])}"
+            facts.append(f"{row['investment']}: {reason}; current value {money(row['value'])}.")
     else:
         if topic == 'contribution':
             rows = sorted(rows, key=lambda r: r['profit'] if r['profit'] is not None else float('-inf'), reverse=True)
