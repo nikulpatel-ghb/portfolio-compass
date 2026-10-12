@@ -1,0 +1,12 @@
+.venv/
+.uv-cache/
+.python/
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+uploads/
+artifacts/
